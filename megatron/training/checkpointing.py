@@ -1055,6 +1055,8 @@ def load_args_from_checkpoint(
     _set_arg('mlp_layernorm', force=True)
     _set_arg('final_layernorm', force=True)
     _set_arg('post_layernorm', force=True)
+    _set_arg('layernorm_init', force=True)
+    _set_arg('input_embeddings_multiplier', force=True)
 
 
     # Model parallelism args.
