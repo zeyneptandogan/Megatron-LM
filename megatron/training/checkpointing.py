@@ -1065,6 +1065,8 @@ def load_args_from_checkpoint(
 
     _set_arg('qknorm_impl', force=True)
     _set_arg('xielu', force=True)
+    _set_arg('layernorm_init', force=True)
+    _set_arg('input_embeddings_multiplier', force=True)
 
     # Model parallelism args.
     if args.use_mp_args_from_checkpoint_args:
