@@ -27,7 +27,7 @@ python tools/checkpoint/convert.py \
 	--save-dir SAVE_DIR \
 	--hf-tokenizer HF_TOKENIZER_NAME  # Optional, set it to save the tokenizer config in `SAVE_DIR`.
 ```
-In case you are converting experimental Apertus models, make sure to install the latest version of the transformers fork before running the conversion:
+In order to be able to convert Apertus models, we instantiate a custom HF `SwissAIForCausalLM`; make sure to install the latest version of the transformers fork before running the conversion:
 ```
 git clone https://github.com/swiss-ai/transformers.git
 cd transformers
@@ -46,4 +46,4 @@ output = model.generate(inputs.input_ids, attention_mask=inputs.attention_mask, 
 print(tokenizer.decode(output[0], skip_special_tokens=True))
 ```
 
-See `tools/checkpoint/do-convert.sh` for an end-to-end megatron->hf conversion example.
+See `scripts/conversion/do-convert.sh` for an end-to-end megatron->hf conversion example.
