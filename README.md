@@ -123,7 +123,7 @@ Minimal example:
 python tools/checkpoint/convert.py \
 	--model-type GPT \
 	--loader core \
-	--saver llama_hf \
+	--saver swissai_hf \
 	--load-dir CHECKPOINT_PATH \
 	--save-dir SAVE_DIR \
 	--hf-tokenizer HF_TOKENIZER_NAME  # Optional, set it to save the tokenizer config in `SAVE_DIR`.
