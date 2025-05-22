@@ -1,7 +1,7 @@
 #!/bin/bash
 
 #SBATCH --account=a-a06
-#SBATCH --time=00:19:59
+#SBATCH --time=11:59:59
 #SBATCH --job-name=llama-moe
 #SBATCH --output=/iopsstor/scratch/cscs/%u/Megatron-LM/logs/slurm/training/%x-%j.out
 #SBATCH --error=/iopsstor/scratch/cscs/%u/Megatron-LM/logs/slurm/training/%x-%j.err
@@ -42,7 +42,10 @@ echo "GPUs per node: $SLURM_GPUS_PER_NODE"
 ################ Configs ################
 # NOTE(tj.solergibert) Check the `Data` section in the README. Use `,` to specify multiple datasets e.g. "/path/to/dataset/A,/path/to/dataset/B,/path/to/dataset/C"
 DATAROOT=/iopsstor/scratch/cscs/jpcoles/a06
-DATASETS=$DATAROOT/swissai-fineweb-edu-score-2-filterrobots-merge
+DATASETS=(
+        $DATAROOT/swissai-fineweb-edu-score-2-filterrobots-merge
+)
+DATASETS=$(IFS=','; echo "${DATASETS[*]}")
 
 MBS=50 # Micro batch size
 GBS=400 # Global batch size
@@ -65,7 +68,9 @@ BACKUP_CODEBASE=false # Set to `true` to copy the codebase to the experiment fol
 
 # Logging directories & artifacts
 PROJECT_NAME=Megatron-MOE
-EXP_NAME=moe-llama-$SLURM_NNODES
+
+TIMESTAMP=$(date +'%Y%m%d_%H%M%S')
+EXP_NAME="moe-llama-${SLURM_NNODES}-${TIMESTAMP}"
 PROJECT_DIR=$MEGATRON_LM_DIR/logs/Meg-Runs/$PROJECT_NAME
 
 #########################################
@@ -148,7 +153,7 @@ TRAINING_ARGS=(
 	--global-batch-size $GBS
 	--no-check-for-nan-in-loss-and-grad
 	--train-iters $TRAINING_STEPS
-	--log-interval 50
+	--log-interval 1
 	--eval-iters 0
 	--cross-entropy-loss-fusion
 	--disable-bias-linear
@@ -187,8 +192,8 @@ MIXED_PRECISION_ARGS=(
 )
 
 DISTRIBUTED_ARGS=(
-	--tensor-model-parallel-size $SLURM_GPUS_PER_NODE
-	--sequence-parallel             # ← Enable sequence parallelism
+	--tensor-model-parallel-size 1 #$SLURM_GPUS_PER_NODE
+	#--sequence-parallel             # ← Enable sequence parallelism
 	--pipeline-model-parallel-size 1
 	--use-distributed-optimizer
 	--overlap-grad-reduce
