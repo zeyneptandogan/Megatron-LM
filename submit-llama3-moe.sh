@@ -1,6 +1,6 @@
 #!/bin/bash
 
-#SBATCH --account=a-a06
+#SBATCH --account=a-a139
 #SBATCH --time=11:59:59
 #SBATCH --job-name=llama-moe
 #SBATCH --output=/iopsstor/scratch/cscs/%u/Megatron-LM/logs/slurm/training/%x-%j.out
@@ -58,7 +58,7 @@ AUTO_JOB_REQUEUE=false # Set to `true` to continuously submit jobs to Slurm unti
 #### Debugging ####
 LOG_NCCL=false # Log NCCL_DEBUG=info. Every process will dump the logging into separate files, check `NCCL_DEBUG_FILE`
 NSYS_PROFILER=false # Turn on the NSYS profiler. Check the `--profile-*` args available in megatron/training/arguments.py
-MOCK_DATA=false # Set to `true` to use mock data
+MOCK_DATA=false # Set to `true` to use mock data
 ###################
 
 # Megatron source and dataset cache WARNING (!) MUST BE ON IOPSSTOR (!)
