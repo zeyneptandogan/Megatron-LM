@@ -307,6 +307,25 @@ def train_valid_test_datasets_provider(train_val_test_num_samples):
 
     return train_ds, valid_ds, test_ds
 
+def extra_args_provider(parser):
+   
+
+    # enable expert learning rate
+    parser.add_argument(
+        '--diff-expert-lr',
+        action='store_true',
+        help='if set, use a separate learning rate for MoE experts'
+    )
+    parser.add_argument(
+        '--expert-lr',
+        type=float,
+        default=None,
+        help=(
+            'learning rate to use for MoE expert parameters when '
+            '`--diff-expert-lr` is enabled'
+        )
+    )
+    return parser
 
 if __name__ == "__main__":
 
@@ -318,5 +337,6 @@ if __name__ == "__main__":
         model_provider,
         ModelType.encoder_or_decoder,
         forward_step,
+        extra_args_provider=extra_args_provider,  
         args_defaults={'tokenizer_type': 'GPT2BPETokenizer'},
     )

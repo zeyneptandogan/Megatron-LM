@@ -740,13 +740,13 @@ class TransformerConfig(ModelParallelConfig):
             raise ValueError(
                 "alltoall_seq dispatcher not support different TP size for MoE and Dense layer."
             )
-
+        '''
         if self.moe_router_enable_expert_bias and self.moe_router_score_function != "sigmoid":
             raise ValueError(
                 "Expert bias for aux-loss-free routing only supports sigmoid score function."
                 "Please set --moe-router-score-function sigmoid for sigmoid score function."
             )
-
+        '''
         if self.num_moe_experts and self.fp8:
             # TE version below 1.7.0 will raise Error when handle zeros tokens for expert
             if not is_te_min_version("1.7.0.dev0"):

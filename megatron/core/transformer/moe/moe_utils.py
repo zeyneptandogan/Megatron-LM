@@ -9,6 +9,62 @@ from megatron.core import parallel_state
 from megatron.core.tensor_parallel.mappings import gather_from_sequence_parallel_region
 
 
+def compute_maxvio(selected_experts: torch.Tensor,
+                                  num_experts: int,
+                                  dist_group) -> (torch.Tensor, torch.Tensor):
+    """
+    Computes the maximum load imbalance (maxvio) and per‐expert load_counts
+    across all ranks in a distributed setting.
+
+    Args:
+        selected_experts (Tensor): 1D tensor of length (tokens_on_this_rank), where each entry
+                                   is an expert index [0 .. num_experts-1].
+        num_experts (int):       Total number of experts in the MoE layer.
+        dist_group:              The torch.distributed process group to use for reductions.
+
+    Returns:
+        maxvio (Tensor): A scalar tensor giving (max_load - expected_load)/expected_load,
+                         where max_load and expected_load are computed globally.
+        load_counts (Tensor): 1D tensor of length num_experts. load_counts[i] is the total
+                              number of tokens routed to expert i, summed over all ranks.
+    """
+    # Flatten to a 1D vector of expert indices for all tokens on this rank.
+    selected = selected_experts.view(-1)
+
+    # 1) Compute the local token count (number of tokens on this rank).
+    local_token_count = torch.tensor(
+        selected.numel(),
+        dtype=torch.float32,
+        device=selected.device
+    )
+
+    # 2) all_reduce to get the global total number of tokens across all ranks.
+    torch.distributed.all_reduce(
+        local_token_count,
+        op=torch.distributed.ReduceOp.SUM,
+        group=dist_group
+    )
+    total_tokens = local_token_count.item()  # global token count
+
+    # 3) Compute per‐expert counts on this rank, then all_reduce to get global counts.
+    load_counts = torch.bincount(selected, minlength=num_experts).float()
+    torch.distributed.all_reduce(
+        load_counts,
+        op=torch.distributed.ReduceOp.SUM,
+        group=dist_group
+    )
+
+    # 4) Compute expected load per expert (global).
+    expected_load = total_tokens / float(num_experts)
+
+    # 5) Find the maximum load any expert has (globally).
+    max_load = load_counts.max()
+
+    # 6) Compute the relative imbalance.
+    maxvio = (max_load - expected_load) / expected_load
+
+    return maxvio, load_counts
+
 def switch_load_balancing_loss_func(
     probs: torch.Tensor,
     tokens_per_expert: torch.Tensor,
@@ -422,12 +478,26 @@ def topk_softmax_with_capacity(
             return torch.topk(scores, k=topk, dim=1)
 
     if score_function == "softmax":
-        if use_pre_softmax:
-            scores = torch.softmax(logits, dim=-1, dtype=torch.float32).type_as(logits)
+        # 1) create a *biased* view only for the discrete decision
+        logits_for_routing = logits + expert_bias if expert_bias is not None else logits
+
+        if use_pre_softmax:                      # ← softmax-topk branch
+            scores = torch.softmax(
+                logits_for_routing, dim=-1, dtype=torch.float32
+            ).type_as(logits)                    # bias is inside this softmax
             probs, top_indices = compute_topk(scores, topk, moe_router_topk_limited_devices)
-        else:
-            scores, top_indices = compute_topk(logits, topk, moe_router_topk_limited_devices)
-            probs = torch.softmax(scores, dim=-1, dtype=torch.float32).type_as(logits)
+
+        else:                                    # ← topk-softmax branch
+            # pick Top-K experts from the biased logits
+            _, top_indices = compute_topk(
+                logits_for_routing, topk, moe_router_topk_limited_devices
+            )
+
+            # produce the gating probabilities - based on old logits
+            probs = torch.softmax(
+                torch.gather(logits, dim=1, index=top_indices), dim=1, dtype=torch.float32
+            ).type_as(logits)  
+
     elif score_function == "sigmoid":
         scores = torch.sigmoid(logits)
         if expert_bias is not None:

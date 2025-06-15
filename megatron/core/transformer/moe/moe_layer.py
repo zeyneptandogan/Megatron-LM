@@ -131,6 +131,9 @@ class MoELayer(BaseMoELayer):
             (dispatched_input, tokens_per_expert) = self.token_dispatcher.token_permutation(
                 hidden_states, probs, routing_map
             )
+            with torch.no_grad():
+                # routing_map is [tokens, num_experts] boolean → grab the expert IDs per token
+                self.local_ids = routing_map.nonzero(as_tuple=False)[:, 1]  # shape [tokens*K]       
             expert_output, mlp_bias = self.experts(dispatched_input, tokens_per_expert)
             output, mlp_bias = self.token_dispatcher.token_unpermutation(expert_output, mlp_bias)
             if self.use_shared_expert and not self.shared_expert_overlap:
@@ -143,5 +146,5 @@ class MoELayer(BaseMoELayer):
             output, mlp_bias = tensor_parallel.checkpoint(custom_forward, False, hidden_states)
         else:
             output, mlp_bias = custom_forward(hidden_states)
-
+        
         return output, mlp_bias

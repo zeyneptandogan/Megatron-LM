@@ -59,7 +59,7 @@ from megatron.training.utils import is_rank0
 from megatron.legacy.data.data_samplers import build_pretraining_data_loader
 from megatron.core.optimizer_param_scheduler import OptimizerParamScheduler
 from megatron.core.transformer.moe import upcycling_utils
-from megatron.core.transformer.moe.moe_utils import track_moe_metrics
+from megatron.core.transformer.moe.moe_utils import track_moe_metrics, compute_maxvio
 from megatron.core.parallel_state import (
     destroy_global_memory_buffer,
     destroy_model_parallel,
@@ -819,6 +819,55 @@ def train_step(forward_step_func, data_iterator,
             micro_batch_size=args.micro_batch_size,
             decoder_seq_length=args.decoder_seq_length,
             forward_only=False)
+        
+        dist_group = mpu.get_context_parallel_group()
+        cp_rank    = torch.distributed.get_rank(dist_group)
+        rank = cp_rank
+        maxvio_vals = []
+        device = torch.cuda.current_device()
+
+        for layer_idx, model_chunk in enumerate(model):
+            for m_idx, m in enumerate(model_chunk.modules()):
+                local_ids = getattr(m, "local_ids", None)
+                if local_ids is not None and local_ids.numel() > 0:
+                    print(f"\n[DEBUG Rank {rank} Device cuda:{device}] Starting layer_idx={layer_idx}, chunk type={type(model_chunk).__name__}")
+
+                    print(f"[DEBUG Rank {rank}]   Module #{m_idx}: {type(m).__name__}")
+                    print(f"[DEBUG Rank {rank}]     local_ids shape: {tuple(local_ids.shape)}, local ids: {len(local_ids.flatten())}")
+
+                    # convert local -> global expert IDs
+                    num_local = m.num_local_experts
+                    global_ids = rank * num_local + local_ids
+                    unique, counts = torch.unique(global_ids, return_counts=True)
+                    print(f"[DEBUG Rank {rank}]     global_ids unique experts: {len(unique)}, counts: {counts}")
+
+                    sel = global_ids
+
+                    # compute imbalance
+                    num_experts = args.num_experts - (args.moe_shared_expert_intermediate_size or 0)
+                    maxvio, load = compute_maxvio(sel, num_experts, dist_group)
+                    maxvio_vals.append(maxvio)
+
+                    print(
+                        f"[CP-rank {rank}] iter {args.curr_iteration}  "
+                        f"MaxVio={maxvio.item():.4f}  "
+                        f"min/max load={int(load.min())}/{int(load.max())}"
+                    )
+
+                if hasattr(m, "local_ids"):
+                    delattr(m, "local_ids")
+                    
+            if maxvio_vals:
+                avg_maxvio = torch.stack(maxvio_vals).mean()
+                print(f"[CP-rank {rank}] >>> Avg-MaxVio = {avg_maxvio.item():.4f}")
+            
+            # plug into your losses
+            if losses_reduced:
+                for d in losses_reduced:
+                    d["maxvio"] = avg_maxvio
+            else:
+                losses_reduced = [{"maxvio": avg_maxvio}]
+
     should_checkpoint, should_exit, exit_code = rerun_state_machine.should_checkpoint_and_exit()
     if should_exit:
         return {}, True, should_checkpoint, should_exit, exit_code, None, None
