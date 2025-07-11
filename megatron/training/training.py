@@ -359,8 +359,25 @@ def pretrain(
         # Model, optimizer, and learning rate.
         timers('model-and-optimizer-setup', log_level=0).start(barrier=True)
         app_metrics['app_build_optimizer_start_time'] = one_logger_utils.get_timestamp_in_ms()
-        model, optimizer, opt_param_scheduler = setup_model_and_optimizer(
-            model_provider, model_type, checkpointing_context=checkpointing_context)
+        if args.diff_expert_lr:
+            def is_expert_param(name, _):
+                # add other MoE substrings if you wish (router, gate…)
+                return '.mlp.experts.' in name
+
+            # make sure expert_lr was supplied
+            assert args.expert_lr is not None, "--expert_lr must be set when --diff_expert_lr is True"
+
+            lr_mult_expert = args.expert_lr / args.lr  
+            model, optimizer, opt_param_scheduler = setup_model_and_optimizer(
+                model_provider,
+                model_type,
+                scale_lr_cond=is_expert_param,           
+                lr_mult=lr_mult_expert,                     
+                checkpointing_context=checkpointing_context 
+            )
+        else:
+            model, optimizer, opt_param_scheduler = setup_model_and_optimizer(
+                model_provider, model_type, checkpointing_context=checkpointing_context)
 
         timers('model-and-optimizer-setup').stop()
         print_datetime('after model, optimizer, and learning rate '
@@ -706,6 +723,27 @@ def setup_model_and_optimizer(model_provider_func,
     model = get_model(model_provider_func, model_type, wrap_with_ddp=args.ckpt_convert_format is None)
     unwrapped_model = unwrap_model(model)
 
+    # ─── SANITY CHECK: does at least one param match? ─────────────────────
+    '''
+    if scale_lr_cond is not None and lr_mult != 1.0:
+        matched = []
+        # unwrapped may be a list of modules
+        modules = unwrapped_model if isinstance(unwrapped_model, (list, tuple)) else [unwrapped_model]
+        for module in modules:
+            for name, _ in module.named_parameters():
+                if scale_lr_cond(name, None):
+                    matched.append(name)
+        if not matched:
+            print_rank_0(
+                "WARNING: --diff_expert_lr is True, but no parameters match '.mlp.experts.'"
+            )
+        else:
+            print_rank_0(
+                f"[DEBUG] Found {len(matched)} expert parameters; first few:\n  " +
+                "\n  ".join(matched[:5])
+            )
+    '''
+
     kwargs = {}
     for f in dataclasses.fields(OptimizerConfig):
         if hasattr(args, f.name):
@@ -830,16 +868,16 @@ def train_step(forward_step_func, data_iterator,
             for m_idx, m in enumerate(model_chunk.modules()):
                 local_ids = getattr(m, "local_ids", None)
                 if local_ids is not None and local_ids.numel() > 0:
-                    print(f"\n[DEBUG Rank {rank} Device cuda:{device}] Starting layer_idx={layer_idx}, chunk type={type(model_chunk).__name__}")
+                    #print(f"\n[DEBUG Rank {rank} Device cuda:{device}] Starting layer_idx={layer_idx}, chunk type={type(model_chunk).__name__}")
 
-                    print(f"[DEBUG Rank {rank}]   Module #{m_idx}: {type(m).__name__}")
-                    print(f"[DEBUG Rank {rank}]     local_ids shape: {tuple(local_ids.shape)}, local ids: {len(local_ids.flatten())}")
+                    #print(f"[DEBUG Rank {rank}]   Module #{m_idx}: {type(m).__name__}")
+                    #print(f"[DEBUG Rank {rank}]     local_ids shape: {tuple(local_ids.shape)}, local ids: {len(local_ids.flatten())}")
 
                     # convert local -> global expert IDs
                     num_local = m.num_local_experts
                     global_ids = rank * num_local + local_ids
                     unique, counts = torch.unique(global_ids, return_counts=True)
-                    print(f"[DEBUG Rank {rank}]     global_ids unique experts: {len(unique)}, counts: {counts}")
+                    #print(f"[DEBUG Rank {rank}]     global_ids unique experts: {len(unique)}, counts: {counts}")
 
                     sel = global_ids
 
@@ -848,18 +886,18 @@ def train_step(forward_step_func, data_iterator,
                     maxvio, load = compute_maxvio(sel, num_experts, dist_group)
                     maxvio_vals.append(maxvio)
 
-                    print(
-                        f"[CP-rank {rank}] iter {args.curr_iteration}  "
-                        f"MaxVio={maxvio.item():.4f}  "
-                        f"min/max load={int(load.min())}/{int(load.max())}"
-                    )
+                    #print(
+                    #    f"[CP-rank {rank}] iter {args.curr_iteration}  "
+                    #    f"MaxVio={maxvio.item():.4f}  "
+                    #    f"min/max load={int(load.min())}/{int(load.max())}"
+                    #)
 
                 if hasattr(m, "local_ids"):
                     delattr(m, "local_ids")
                     
             if maxvio_vals:
                 avg_maxvio = torch.stack(maxvio_vals).mean()
-                print(f"[CP-rank {rank}] >>> Avg-MaxVio = {avg_maxvio.item():.4f}")
+                #print(f"[CP-rank {rank}] >>> Avg-MaxVio = {avg_maxvio.item():.4f}")
             
             # plug into your losses
             if losses_reduced:

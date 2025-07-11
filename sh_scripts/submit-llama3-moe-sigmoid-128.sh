@@ -1,6 +1,6 @@
 #!/bin/bash
 
-#SBATCH --account=a-a139
+#SBATCH -A a139
 #SBATCH --time=11:59:59
 #SBATCH --job-name=llama-moe
 #SBATCH --output=/iopsstor/scratch/cscs/%u/Megatron-LM/logs/slurm/training/%x-%j.out
@@ -47,8 +47,8 @@ DATASETS=(
 )
 DATASETS=$(IFS=','; echo "${DATASETS[*]}")
 
-MBS=50 # Micro batch size
-GBS=400 # Global batch size
+MBS=16 # Micro batch size
+GBS=192 # Global batch size
 SEQ_LEN=512 # Sequence length 
 TRAINING_STEPS=50000
 CHECKPOINT_STEPS=1000
@@ -67,16 +67,14 @@ DATASET_CACHE_DIR=/iopsstor/scratch/cscs/$USER/datasets/cache
 BACKUP_CODEBASE=false # Set to `true` to copy the codebase to the experiment folder and re-use it across runs
 
 # Logging directories & artifacts
-PROJECT_NAME=Megatron-MOE
+PROJECT_NAME=Megatron-MOE-runs
 
-TIMESTAMP=$(date +'%Y%m%d_%H%M%S')
-EXP_NAME="moe-llama-${SLURM_NNODES}-${TIMESTAMP}"
+EXP_NAME="moe-model-${SLURM_NNODES}-0.001-lr-sigmoid-auxloss-128-moe-hidden-decreased"
 PROJECT_DIR=$MEGATRON_LM_DIR/logs/Meg-Runs/$PROJECT_NAME
 
 #########################################
 
 EXP_DIR=$PROJECT_DIR/$EXP_NAME
-
 TORCH_INDUCTOR_CACHE_DIR=/workspace/torch_compile_cache/$SLURM_JOB_ID
 TRITON_HOME_CACHE_DIR=/workspace/triton_home_cache/$SLURM_JOB_ID
 PYTHON_CACHE_DIR=/workspace/python_cache/$SLURM_JOB_ID
@@ -100,7 +98,7 @@ export OMP_NUM_THREADS=$SLURM_CPUS_PER_TASK
 # - MASTER_ADDR, MASTER_PORT, WORLD_SIZE - already known before `srun`
 # - RANK, LOCAL_RANK - will set at `srun` command
 export MASTER_ADDR=$(scontrol show hostnames $SLURM_JOB_NODELIST | head -n 1)
-export MASTER_PORT=6000
+export MASTER_PORT=12354
 export WORLD_SIZE=$SLURM_NPROCS
 
 ulimit -c 0
@@ -114,7 +112,7 @@ TRANSFORMER_ENGINE_ARGS=(
 )
 
 NETWORK_SIZE_ARGS=(
-	--num-layers 24
+	--num-layers 12 
 	--hidden-size 768
 	--ffn-hidden-size 2048
 	--num-attention-heads 12
@@ -129,6 +127,7 @@ NETWORK_SIZE_ARGS=(
 	--normalization RMSNorm
 	--swiglu
 	--untie-embeddings-and-output-weights
+	--moe-ffn-hidden-size 1024  #newly added
 )
 
 LOGGING_ARGS=(
@@ -154,7 +153,7 @@ TRAINING_ARGS=(
 	--no-check-for-nan-in-loss-and-grad
 	--train-iters $TRAINING_STEPS
 	--log-interval 1
-	--eval-iters 0
+	--eval-iters 200
 	--cross-entropy-loss-fusion
 	--disable-bias-linear
 	--optimizer adam
@@ -172,7 +171,7 @@ INITIALIZATION_ARGS=(
 
 # NOTE(tj.solergibert) Check all the arguments in megatron/training/arguments.py#L1548 or https://github.com/NVIDIA/Megatron-LM/blob/0dd78ddcdb117ce4f2e9761449274d87af717674/megatron/training/arguments.py#L1548-L1606
 LEARNING_RATE_ARGS=(
-	--lr 0.0005
+	--lr 0.001
 	--min-lr 0.000001
 	--lr-decay-style cosine
 	--lr-warmup-iters 300
@@ -216,13 +215,18 @@ DATA_ARGS=(
 )
 
 MOE_ARGS=(
-	--num-experts 8
+	--num-experts 128
 	--moe-router-topk 2
 	--moe-router-load-balancing-type aux_loss
-	--moe-router-score-function softmax
+	--moe-router-score-function sigmoid
 	--moe-aux-loss-coeff 0.1
 	--moe-z-loss-coeff	 0.01
 	--moe-grouped-gemm
+)
+
+EXTRA_ARGS=(
+  --diff-expert-lr
+  --expert-lr 0.0005
 )
 
 # Set up directories
